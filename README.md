@@ -1,8 +1,6 @@
 ## Prerequisites
-GPU: NVIDIA GPU with CUDA support (required for high-performance rendering).
-Drivers: Latest NVIDIA Drivers installed.
-Environment: * Recommended: WSL2 (Windows Subsystem for Linux) or Native Linux. Developing in a Linux-based environment generally simplifies the compilation of CUDA kernels and avoids many common pathing issues.
-Alternative: Windows Native. While possible, this requires a correctly configured Visual Studio C++ Build Tools environment and manual management of CUDA environment variables.
+
+Please also view `README.md` in [core engine submodule](https://github.com/trianglesplatting/triangle-splatting/tree/685ff270a8273afc3a2b094ae3148dd0b98e31e9).
 
 ### 1. Backend Setup (Python/Flask)
 
@@ -41,4 +39,5 @@ VITE_API_URL=http://localhost:5000
 ``` Bash
 npm run dev
 ```
+
 
