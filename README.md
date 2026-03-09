@@ -1,8 +1,11 @@
-## Prerequisites
-
 Please also view `README.md` in [core engine submodule](https://github.com/trianglesplatting/triangle-splatting/tree/685ff270a8273afc3a2b094ae3148dd0b98e31e9).
 
-### 1. Backend Setup (Python/Flask)
+### 1. Clone Repo
+``` bash
+git clone https://github.com/adynsydeez/tri-splat-cn --recursive
+```
+
+### 2. Backend Setup (Python/Flask)
 
 The backend handles data processing and interfaces with CUDA kernels.
 
@@ -22,7 +25,7 @@ pip install -r requirements.txt
 ``` Bash
 python app.py
 ```
-### 2. Frontend Setup (React/Vite)
+### 3. Frontend Setup (React/Vite)
 The frontend provides the interactive 3D viewport.
 
 #### Install Packages:
@@ -39,5 +42,6 @@ VITE_API_URL=http://localhost:5000
 ``` Bash
 npm run dev
 ```
+
 
 
