@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, FC } from 'react'
 
-function App() {
-  const [message, setMessage] = useState('Loading...')
+const App: FC = () => {
+  const [message, setMessage] = useState<string>('Loading...')
 
   useEffect(() => {
     fetch('http://localhost:5000/api/hello')
