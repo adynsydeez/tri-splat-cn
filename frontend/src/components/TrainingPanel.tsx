@@ -206,8 +206,8 @@ export default function TrainingPanel() {
               onChange={(fps) => setForm((f) => ({ ...f, framerate: fps }))}
               disabled={isRunning}
               min={1}
-              max={60}
-              step={0.5}
+              max={20}
+              step={1}
             />
           </div>
         )}

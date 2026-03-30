@@ -18,7 +18,7 @@ export function FramerateSlider({
   onChange,
   disabled = false,
   min = 1,
-  max = 60,
+  max = 20,
   step = 1,
 }: FramerateSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
