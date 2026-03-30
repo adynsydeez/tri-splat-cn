@@ -1,4 +1,5 @@
 import { useEffect, useState, FC } from 'react'
+import TrainingPanel from './components/TrainingPanel'
 
 const App: FC = () => {
   const [message, setMessage] = useState<string>('Loading...')
@@ -11,10 +12,11 @@ const App: FC = () => {
   }, [])
 
   return (
-    <div style={{ textAlign: 'center', marginTop: '50px' }}>
-      <h1>Club Project Dashboard</h1>
-      <p>Backend says: <strong>{message}</strong></p>
-    </div>
+    // <div style={{ textAlign: 'center', marginTop: '50px' }}>
+    //   <h1>Club Project Dashboard</h1>
+    //   <p>Backend says: <strong>{message}</strong></p>
+    // </div>
+    <TrainingPanel></TrainingPanel>
   )
 }
 
