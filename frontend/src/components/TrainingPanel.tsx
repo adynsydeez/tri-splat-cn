@@ -7,13 +7,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTrainingStream, TrainingState, StartOptions } from "../hooks/useTrainingStream";
+import { VideoUploadWidget, VideoUploadState } from "./VideoUploadWidget";
+import { FramerateSlider } from "./FramerateSlider";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface FormState {
-  sourcePath:  string;
+  video:       VideoUploadState;
+  framerate:   number;
   modelPath:   string;
   outdoor:     boolean;
   eval:        boolean;
@@ -52,15 +55,10 @@ interface ProgressBarProps {
 function ProgressBar({ value, total }: ProgressBarProps) {
   const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
   return (
-    <div style={{ background: "var(--color-background-secondary)", borderRadius: 6, height: 8, overflow: "hidden" }}>
+    <div className="w-full h-3 bg-gray-300 rounded-lg overflow-hidden shadow-inner">
       <div
-        style={{
-          width:        `${pct}%`,
-          height:       "100%",
-          background:   "var(--color-text-info)",
-          borderRadius: 6,
-          transition:   "width 0.3s ease",
-        }}
+        className="h-full bg-gradient-to-r from-primary to-primary-dark transition-all duration-500 rounded-lg shadow-md shadow-primary/30"
+        style={{ width: `${pct}%` }}
       />
     </div>
   );
@@ -71,24 +69,17 @@ interface StatusBadgeProps {
 }
 
 function StatusBadge({ status }: StatusBadgeProps) {
-  const map: Record<string, { bg: string; color: string }> = {
-    idle:      { bg: "var(--color-background-secondary)", color: "var(--color-text-secondary)" },
-    running:   { bg: "var(--color-background-info)",      color: "var(--color-text-info)"      },
-    complete:  { bg: "var(--color-background-success)",   color: "var(--color-text-success)"   },
-    error:     { bg: "var(--color-background-danger)",    color: "var(--color-text-danger)"    },
-    cancelled: { bg: "var(--color-background-warning)",   color: "var(--color-text-warning)"   },
+  const map: Record<string, { bg: string; color: string; border: string }> = {
+    idle:      { bg: "bg-gray-100", color: "text-gray-600", border: "border-gray-300" },
+    running:   { bg: "bg-blue-50", color: "text-primary", border: "border-blue-200" },
+    complete:  { bg: "bg-green-50", color: "text-success", border: "border-green-200" },
+    error:     { bg: "bg-red-50", color: "text-error", border: "border-red-200" },
+    cancelled: { bg: "bg-amber-50", color: "text-warning", border: "border-amber-200" },
   };
   const style = map[status] ?? map["idle"];
   return (
     <span
-      style={{
-        padding:      "2px 10px",
-        borderRadius: 999,
-        fontSize:     12,
-        fontWeight:   500,
-        background:   style.bg,
-        color:        style.color,
-      }}
+      className={`inline-block px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider border ${style.bg} ${style.color} ${style.border}`}
     >
       {status}
     </span>
@@ -107,32 +98,24 @@ function LogConsole({ logs }: LogConsoleProps) {
   }, [logs]);
 
   return (
-    <div
-      style={{
-        background:   "var(--color-background-secondary)",
-        border:       "1px solid var(--color-border-tertiary)",
-        borderRadius: 8,
-        padding:      "12px 14px",
-        height:       260,
-        overflowY:    "auto",
-        fontFamily:   "var(--font-mono)",
-        fontSize:     12,
-        lineHeight:   1.7,
-        color:        "var(--color-text-secondary)",
-      }}
-    >
+    <div className="w-full h-72 bg-gray-900 border border-gray-700 rounded-lg p-3.5 overflow-y-auto font-mono text-sm leading-relaxed text-gray-300 shadow-inner">
       {logs.length === 0 && (
-        <span style={{ color: "var(--color-text-tertiary)" }}>
+        <span className="text-gray-600">
           Waiting for output...
         </span>
       )}
       {logs.map((line, i) => {
         const isError = line.includes("ERROR") || line.includes("error");
+        const isWarning = line.includes("WARNING") || line.includes("warning");
+        const isSuccess = line.includes("success") || line.includes("complete") || line.includes("COMPLETE");
+        
+        let colorClass = "text-gray-300";
+        if (isError) colorClass = "text-error";
+        else if (isWarning) colorClass = "text-warning";
+        else if (isSuccess) colorClass = "text-success";
+        
         return (
-          <div
-            key={i}
-            style={{ color: isError ? "var(--color-text-danger)" : undefined }}
-          >
+          <div key={i} className={colorClass}>
             {line}
           </div>
         );
@@ -150,11 +133,12 @@ export default function TrainingPanel() {
   const { start, cancel, reset, state } = useTrainingStream();
 
   const [form, setForm] = useState<FormState>({
-    sourcePath: "",
-    modelPath:  "",
-    outdoor:    false,
-    eval:       true,
-    iterations: "",
+    video:       { file: null, filename: "" },
+    framerate:   24,
+    modelPath:   "",
+    outdoor:     false,
+    eval:        true,
+    iterations:  "",
   });
 
   const isRunning = state.status === "running";
@@ -162,9 +146,14 @@ export default function TrainingPanel() {
   const pct       = state.total > 0 ? Math.round((state.iteration / state.total) * 100) : 0;
 
   const handleStart = (): void => {
+    if (!form.video.file) {
+      alert("Please upload a video file first");
+      return;
+    }
+
     const options: StartOptions = {
-      sourcePath: form.sourcePath || "./data/garden",
-      modelPath:  form.modelPath  || "./output/garden",
+      sourcePath: `video://${form.video.filename}:${form.framerate}fps`,
+      modelPath:  form.modelPath || "./output/model",
       outdoor:    form.outdoor,
       eval:       form.eval,
     };
@@ -176,64 +165,71 @@ export default function TrainingPanel() {
 
   const inputStyle: React.CSSProperties = {
     width:        "100%",
-    padding:      "8px 10px",
+    padding:      "10px 12px",
     borderRadius: 6,
-    border:       "1px solid var(--color-border-secondary)",
-    background:   "var(--color-background-primary)",
-    color:        "var(--color-text-primary)",
+    border:       "1px solid #ddd",
+    background:   "#fff",
+    color:        "#222",
     fontSize:     14,
     boxSizing:    "border-box",
+    boxShadow:    "0 1px 3px rgba(0, 0, 0, 0.05)",
+    transition:   "all 0.2s ease",
   };
 
   return (
-    <div style={{ maxWidth: 680, margin: "0 auto", padding: "24px 0", fontFamily: "var(--font-sans)" }}>
+    <div className="max-w-2xl mx-auto px-4 py-6">
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: "var(--color-text-primary)" }}>
+      <div className="flex items-center gap-3 mb-7">
+        <h2 className="text-3xl font-bold text-gray-900 m-0">
           Triangle Splatting
         </h2>
         <StatusBadge status={state.status} />
       </div>
 
       {/* Form */}
-      <div style={{
-        background:   "var(--color-background-secondary)",
-        border:       "1px solid var(--color-border-tertiary)",
-        borderRadius: 12,
-        padding:      20,
-        marginBottom: 20,
-      }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
-              Scene path
-            </label>
-            <input
-              style={inputStyle}
-              value={form.sourcePath}
-              placeholder="./data/garden"
-              onChange={(e) => setForm((f) => ({ ...f, sourcePath: e.target.value }))}
-              disabled={isRunning}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
-              Output path
-            </label>
-            <input
-              style={inputStyle}
-              value={form.modelPath}
-              placeholder="./output/garden"
-              onChange={(e) => setForm((f) => ({ ...f, modelPath: e.target.value }))}
-              disabled={isRunning}
-            />
-          </div>
+      <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5 shadow-sm">
+        {/* Video Upload Section */}
+        <div className="mb-5">
+          <VideoUploadWidget
+            value={form.video}
+            onChange={(video) => setForm((f) => ({ ...f, video }))}
+            disabled={isRunning}
+          />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+        {/* Framerate Slider */}
+        {form.video.file && (
+          <div className="mb-5">
+            <FramerateSlider
+              value={form.framerate}
+              onChange={(fps) => setForm((f) => ({ ...f, framerate: fps }))}
+              disabled={isRunning}
+              min={1}
+              max={60}
+              step={0.5}
+            />
+          </div>
+        )}
+
+        {/* Output Path */}
+        <div className="mb-4.5">
+          <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
+            Output path (optional)
+          </label>
+          <input
+            style={inputStyle}
+            value={form.modelPath}
+            placeholder="./output/model"
+            onChange={(e) => setForm((f) => ({ ...f, modelPath: e.target.value }))}
+            disabled={isRunning}
+          />
+        </div>
+
+        {/* Grid with Iterations and Checkboxes */}
+        <div className="grid grid-cols-3 gap-3.5 mb-5">
           <div>
-            <label style={{ display: "block", fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
               Iterations (optional)
             </label>
             <input
@@ -248,25 +244,27 @@ export default function TrainingPanel() {
             />
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14, color: "var(--color-text-primary)", marginBottom: 6 }}>
+          <div className="flex flex-col justify-end">
+            <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
               <input
                 type="checkbox"
                 checked={form.outdoor}
                 onChange={(e) => setForm((f) => ({ ...f, outdoor: e.target.checked }))}
                 disabled={isRunning}
+                className="w-[18px] h-[18px] cursor-pointer accent-primary"
               />
               Outdoor scene
             </label>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14, color: "var(--color-text-primary)", marginBottom: 6 }}>
+          <div className="flex flex-col justify-end">
+            <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
               <input
                 type="checkbox"
                 checked={form.eval}
                 onChange={(e) => setForm((f) => ({ ...f, eval: e.target.checked }))}
                 disabled={isRunning}
+                className="w-[18px] h-[18px] cursor-pointer accent-primary"
               />
               Run evaluation
             </label>
@@ -274,20 +272,11 @@ export default function TrainingPanel() {
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: "flex", gap: 10 }}>
+        <div className="flex gap-3">
           {!isRunning && !isDone && (
             <button
               onClick={handleStart}
-              style={{
-                padding:      "9px 20px",
-                borderRadius: 6,
-                border:       "none",
-                background:   "var(--color-text-info)",
-                color:        "#fff",
-                fontWeight:   500,
-                fontSize:     14,
-                cursor:       "pointer",
-              }}
+              className="px-6 py-2.5 bg-gradient-to-br from-primary to-primary-dark text-white font-semibold text-sm rounded transition-all duration-200 shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:-translate-y-0.5"
             >
               Start training
             </button>
@@ -296,16 +285,7 @@ export default function TrainingPanel() {
           {isRunning && (
             <button
               onClick={cancel}
-              style={{
-                padding:      "9px 20px",
-                borderRadius: 6,
-                border:       "1px solid var(--color-border-secondary)",
-                background:   "transparent",
-                color:        "var(--color-text-danger)",
-                fontWeight:   500,
-                fontSize:     14,
-                cursor:       "pointer",
-              }}
+              className="px-6 py-2.5 bg-white border-1.5 border-error text-error font-semibold text-sm rounded transition-all duration-200 shadow-sm shadow-error/20 hover:bg-red-50 hover:shadow-lg hover:shadow-error/30"
             >
               Cancel
             </button>
@@ -314,16 +294,7 @@ export default function TrainingPanel() {
           {isDone && (
             <button
               onClick={reset}
-              style={{
-                padding:      "9px 20px",
-                borderRadius: 6,
-                border:       "1px solid var(--color-border-secondary)",
-                background:   "transparent",
-                color:        "var(--color-text-secondary)",
-                fontWeight:   500,
-                fontSize:     14,
-                cursor:       "pointer",
-              }}
+              className="px-6 py-2.5 bg-white border-1.5 border-gray-300 text-gray-600 font-semibold text-sm rounded transition-all duration-200 shadow-sm shadow-black/8 hover:bg-gray-50 hover:border-gray-500 hover:shadow-lg hover:shadow-black/12"
             >
               New job
             </button>
@@ -333,18 +304,12 @@ export default function TrainingPanel() {
 
       {/* Progress */}
       {(isRunning || isDone) && (
-        <div style={{
-          background:   "var(--color-background-secondary)",
-          border:       "1px solid var(--color-border-tertiary)",
-          borderRadius: 12,
-          padding:      20,
-          marginBottom: 20,
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 13 }}>
-            <span style={{ color: "var(--color-text-secondary)" }}>
+        <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5 shadow-sm">
+          <div className="flex justify-between mb-3.5 text-sm">
+            <span className="text-gray-600 font-semibold">
               Iteration {state.iteration.toLocaleString()} / {state.total.toLocaleString()} &nbsp;({pct}%)
             </span>
-            <span style={{ color: "var(--color-text-secondary)" }}>
+            <span className="text-gray-600 font-semibold">
               {isRunning
                 ? `ETA ${formatEta(state.eta)}`
                 : `Done in ${formatDuration(state.duration)}`}
@@ -354,9 +319,9 @@ export default function TrainingPanel() {
           <ProgressBar value={state.iteration} total={state.total} />
 
           {state.loss != null && (
-            <div style={{ marginTop: 10, fontSize: 13, color: "var(--color-text-secondary)" }}>
+            <div className="mt-3.5 text-sm text-gray-600">
               Loss:{" "}
-              <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-text-primary)" }}>
+              <span className="font-mono text-primary font-semibold">
                 {state.loss.toFixed(6)}
               </span>
             </div>
@@ -366,18 +331,11 @@ export default function TrainingPanel() {
 
       {/* Error */}
       {state.status === "error" && state.error && (
-        <div style={{
-          background:   "var(--color-background-danger)",
-          border:       "1px solid var(--color-border-danger)",
-          borderRadius: 8,
-          padding:      "12px 16px",
-          marginBottom: 20,
-          fontSize:     14,
-        }}>
-          <div style={{ fontWeight: 500, color: "var(--color-text-danger)", marginBottom: 4 }}>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-5 text-sm shadow-sm shadow-error/10">
+          <div className="font-semibold text-error mb-1.5">
             {state.error.code}
           </div>
-          <div style={{ color: "var(--color-text-danger)" }}>
+          <div className="text-error">
             {state.error.message}
           </div>
         </div>
@@ -385,17 +343,14 @@ export default function TrainingPanel() {
 
       {/* Completion */}
       {state.status === "complete" && (
-        <div style={{
-          background:   "var(--color-background-success)",
-          border:       "1px solid var(--color-border-success)",
-          borderRadius: 8,
-          padding:      "12px 16px",
-          marginBottom: 20,
-          fontSize:     14,
-          color:        "var(--color-text-success)",
-        }}>
-          Training complete! Output saved to:{" "}
-          <span style={{ fontFamily: "var(--font-mono)" }}>{state.outputPath}</span>
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-5 text-sm text-success shadow-sm shadow-success/10">
+          <div className="font-semibold mb-1.5">
+            ✓ Training complete!
+          </div>
+          <div>
+            Output saved to:{" "}
+            <span className="font-mono font-medium">{state.outputPath}</span>
+          </div>
         </div>
       )}
 
