@@ -12,7 +12,7 @@ The backend handles data processing and interfaces with CUDA kernels.
 #### Environment Setup:
 ``` Bash
 cd backend
-python -m venv venv
+python -m venv .venv
 # Linux/WSL: source venv/bin/activate
 # Windows: .\venv\Scripts\activate
 ```
