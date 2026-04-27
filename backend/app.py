@@ -266,7 +266,10 @@ def upload():
     if video.filename == '':
         return jsonify({"error": "Empty filename"}), 400
 
-    fps = float(request.form.get('fps', 2))
+    fps_raw = request.form.get('fps')
+    print(f"[upload] Received fps raw: {fps_raw}")
+    fps = float(fps_raw) if fps_raw else 2.0
+    print(f"[upload] Using fps: {fps}")
     
     filename = secure_filename(video.filename)
     job_id = f"job_{int(time.time())}"
@@ -291,15 +294,37 @@ def upload():
                 yield sse({"type": "error", "message": "Could not open video file"})
                 return
 
-            video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            # Try to get more accurate FPS
+            video_fps_raw = cap.get(cv2.CAP_PROP_FPS)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # Use duration to verify FPS (CAP_PROP_FPS is often wrong)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, total_frames - 1))
+            duration_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            
+            video_fps = video_fps_raw
+            if duration_ms > 0 and total_frames > 0:
+                calc_fps = (total_frames * 1000.0) / duration_ms
+                # If they differ significantly, trust calculated one
+                if abs(calc_fps - video_fps_raw) > 1.0:
+                    video_fps = calc_fps
+            
+            if video_fps <= 0:
+                video_fps = 30.0
+                
             hop = video_fps / fps
             
+            log_msg = f"Video stats: {video_fps:.2f} FPS (raw: {video_fps_raw:.2f}), {total_frames} frames, duration: {duration_ms/1000.0:.2f}s, target {fps} FPS -> hop {hop:.2f}"
+            print(f"[upload] {log_msg}")
+            yield sse({"type": "status", "message": log_msg})
+
             # Estimated frames to be extracted
             est_total = int(total_frames / hop) if hop > 0 else 0
 
             count = 0
             frame_idx = 0
+            next_target_frame = 0
             
             last_progress_time = time.time()
 
@@ -308,10 +333,11 @@ def upload():
                 if not ret:
                     break
                 
-                if frame_idx % hop < 1.0:
+                if frame_idx >= next_target_frame:
                     frame_name = f"{count:05d}.jpg"
                     cv2.imwrite(os.path.join(input_dir, frame_name), frame)
                     count += 1
+                    next_target_frame += hop
                 
                 frame_idx += 1
 

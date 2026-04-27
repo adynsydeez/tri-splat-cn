@@ -134,7 +134,7 @@ export default function TrainingPanel() {
 
   const [form, setForm] = useState<FormState>({
     video:       { file: null, filename: "" },
-    framerate:   24,
+    framerate:   2,
     modelPath:   "",
     outdoor:     false,
     eval:        true,

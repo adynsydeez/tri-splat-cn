@@ -79,17 +79,18 @@ type EngineEvent =
 // ---------------------------------------------------------------------------
 
 const INITIAL_STATE: TrainingState = {
-  status:         "idle",
-  uploadProgress: 0,
-  iteration:      0,
-  total:          30000,
-  loss:       null,
-  eta:        null,
-  logs:       [],
-  error:      null,
-  outputPath: null,
-  duration:   null,
-  sourcePath: null,
+  status:             "idle",
+  uploadProgress:     0,
+  processingProgress: 0,
+  iteration:          0,
+  total:              30000,
+  loss:               null,
+  eta:                null,
+  logs:               [],
+  error:              null,
+  outputPath:         null,
+  duration:           null,
+  sourcePath:         null,
 };
 
 // ---------------------------------------------------------------------------
