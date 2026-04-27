@@ -130,7 +130,7 @@ function LogConsole({ logs }: LogConsoleProps) {
 // ---------------------------------------------------------------------------
 
 export default function TrainingPanel() {
-  const { start, cancel, reset, state } = useTrainingStream();
+  const { uploadVideo, start, cancel, reset, state } = useTrainingStream();
 
   const [form, setForm] = useState<FormState>({
     video:       { file: null, filename: "" },
@@ -141,18 +141,24 @@ export default function TrainingPanel() {
     iterations:  "",
   });
 
-  const isRunning = state.status === "running";
-  const isDone    = (["complete", "error", "cancelled"] as TrainingState["status"][]).includes(state.status);
-  const pct       = state.total > 0 ? Math.round((state.iteration / state.total) * 100) : 0;
+  const isUploading = state.status === "uploading";
+  const isRunning   = state.status === "running";
+  const isDone      = (["complete", "error", "cancelled"] as TrainingState["status"][]).includes(state.status);
+  const isUploaded  = !!state.sourcePath;
+  const pct         = state.total > 0 ? Math.round((state.iteration / state.total) * 100) : 0;
+
+  const handleUpload = async (): Promise<void> => {
+    if (!form.video.file) return;
+    await uploadVideo(form.video.file, form.framerate);
+  };
 
   const handleStart = (): void => {
-    if (!form.video.file) {
+    if (!state.sourcePath) {
       alert("Please upload a video file first");
       return;
     }
 
     const options: StartOptions = {
-      sourcePath: `video://${form.video.filename}:${form.framerate}fps`,
       modelPath:  form.modelPath || "./output/model",
       outdoor:    form.outdoor,
       eval:       form.eval,
@@ -193,10 +199,32 @@ export default function TrainingPanel() {
         <div className="mb-5">
           <VideoUploadWidget
             value={form.video}
-            onChange={(video) => setForm((f) => ({ ...f, video }))}
-            disabled={isRunning}
+            onChange={(video) => {
+              setForm((f) => ({ ...f, video }));
+              if (state.sourcePath) reset(); // Reset if file changes
+            }}
+            disabled={isUploading || isRunning}
           />
         </div>
+
+        {/* Upload/Processing Progress */}
+        {(isUploading || state.processingProgress > 0) && !isUploaded && (
+          <div className="mb-5 p-4 bg-blue-50/50 rounded-lg border border-blue-100">
+            <div className="flex justify-between mb-2 text-xs font-semibold text-primary uppercase tracking-wider">
+              <span>{state.processingProgress > 0 ? "Extracting Frames..." : "Uploading Video..."}</span>
+              <span>{state.processingProgress > 0 ? state.processingProgress : state.uploadProgress}%</span>
+            </div>
+            <ProgressBar 
+              value={state.processingProgress > 0 ? state.processingProgress : state.uploadProgress} 
+              total={100} 
+            />
+            {state.processingProgress > 0 && (
+              <div className="mt-2 text-[10px] text-blue-600 font-medium">
+                Using OpenCV to split video at {form.framerate} FPS...
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Framerate Slider */}
         {form.video.file && (
@@ -204,7 +232,7 @@ export default function TrainingPanel() {
             <FramerateSlider
               value={form.framerate}
               onChange={(fps) => setForm((f) => ({ ...f, framerate: fps }))}
-              disabled={isRunning}
+              disabled={isUploading || isRunning || isUploaded}
               min={1}
               max={20}
               step={1}
@@ -212,76 +240,101 @@ export default function TrainingPanel() {
           </div>
         )}
 
-        {/* Output Path */}
-        <div className="mb-4.5">
-          <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
-            Output path (optional)
-          </label>
-          <input
-            style={inputStyle}
-            value={form.modelPath}
-            placeholder="./output/model"
-            onChange={(e) => setForm((f) => ({ ...f, modelPath: e.target.value }))}
-            disabled={isRunning}
-          />
-        </div>
-
-        {/* Grid with Iterations and Checkboxes */}
-        <div className="grid grid-cols-3 gap-3.5 mb-5">
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
-              Iterations (optional)
-            </label>
-            <input
-              style={inputStyle}
-              type="number"
-              value={form.iterations}
-              placeholder="30000"
-              min={1000}
-              step={1000}
-              onChange={(e) => setForm((f) => ({ ...f, iterations: e.target.value }))}
-              disabled={isRunning}
-            />
+        {/* Action buttons - Step 1: Upload */}
+        {!isUploaded && !isUploading && !isRunning && !isDone && (
+          <div className="mb-5">
+            <button
+              onClick={handleUpload}
+              disabled={!form.video.file}
+              className={`px-6 py-2.5 font-semibold text-sm rounded transition-all duration-200 shadow-lg ${
+                form.video.file 
+                  ? "bg-primary text-white shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:-translate-y-0.5" 
+                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
+            >
+              Upload & Process Video
+            </button>
           </div>
+        )}
 
-          <div className="flex flex-col justify-end">
-            <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
+        {/* Step 2: Training Parameters (only visible after upload) */}
+        {isUploaded && !isRunning && !isDone && (
+          <div className="border-t border-gray-100 pt-5 mt-5 animate-in fade-in slide-in-from-top-4 duration-500">
+            <h3 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-success text-white flex items-center justify-center text-[10px]">✓</span>
+              Video processed. Configure training:
+            </h3>
+            
+            {/* Output Path */}
+            <div className="mb-4.5">
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
+                Output path (optional)
+              </label>
               <input
-                type="checkbox"
-                checked={form.outdoor}
-                onChange={(e) => setForm((f) => ({ ...f, outdoor: e.target.checked }))}
+                style={inputStyle}
+                value={form.modelPath}
+                placeholder="./output/model"
+                onChange={(e) => setForm((f) => ({ ...f, modelPath: e.target.value }))}
                 disabled={isRunning}
-                className="w-[18px] h-[18px] cursor-pointer accent-primary"
               />
-              Outdoor scene
-            </label>
-          </div>
+            </div>
 
-          <div className="flex flex-col justify-end">
-            <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
-              <input
-                type="checkbox"
-                checked={form.eval}
-                onChange={(e) => setForm((f) => ({ ...f, eval: e.target.checked }))}
-                disabled={isRunning}
-                className="w-[18px] h-[18px] cursor-pointer accent-primary"
-              />
-              Run evaluation
-            </label>
-          </div>
-        </div>
+            {/* Grid with Iterations and Checkboxes */}
+            <div className="grid grid-cols-3 gap-3.5 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wider">
+                  Iterations (optional)
+                </label>
+                <input
+                  style={inputStyle}
+                  type="number"
+                  value={form.iterations}
+                  placeholder="30000"
+                  min={1000}
+                  step={1000}
+                  onChange={(e) => setForm((f) => ({ ...f, iterations: e.target.value }))}
+                  disabled={isRunning}
+                />
+              </div>
 
-        {/* Action buttons */}
-        <div className="flex gap-3">
-          {!isRunning && !isDone && (
+              <div className="flex flex-col justify-end">
+                <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={form.outdoor}
+                    onChange={(e) => setForm((f) => ({ ...f, outdoor: e.target.checked }))}
+                    disabled={isRunning}
+                    className="w-[18px] h-[18px] cursor-pointer accent-primary"
+                  />
+                  Outdoor
+                </label>
+              </div>
+
+              <div className="flex flex-col justify-end">
+                <label className="flex items-center gap-2.5 cursor-pointer text-sm text-gray-900 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={form.eval}
+                    onChange={(e) => setForm((f) => ({ ...f, eval: e.target.checked }))}
+                    disabled={isRunning}
+                    className="w-[18px] h-[18px] cursor-pointer accent-primary"
+                  />
+                  Eval
+                </label>
+              </div>
+            </div>
+
             <button
               onClick={handleStart}
               className="px-6 py-2.5 bg-gradient-to-br from-primary to-primary-dark text-white font-semibold text-sm rounded transition-all duration-200 shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:-translate-y-0.5"
             >
-              Start training
+              Start Training
             </button>
-          )}
+          </div>
+        )}
 
+        {/* Action buttons for running/done state */}
+        <div className="flex gap-3">
           {isRunning && (
             <button
               onClick={cancel}

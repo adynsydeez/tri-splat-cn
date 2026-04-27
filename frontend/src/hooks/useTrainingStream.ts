@@ -16,7 +16,7 @@ const API_URL = (import.meta as ImportMeta & { env: Record<string, string> }).en
 // Types
 // ---------------------------------------------------------------------------
 
-export type TrainingStatus = "idle" | "running" | "complete" | "error" | "cancelled";
+export type TrainingStatus = "idle" | "uploading" | "running" | "complete" | "error" | "cancelled";
 
 export interface TrainingError {
   code: string;
@@ -24,19 +24,23 @@ export interface TrainingError {
 }
 
 export interface TrainingState {
-  status:     TrainingStatus;
-  iteration:  number;
-  total:      number;
-  loss:       number | null;
-  eta:        number | null;        // estimated seconds remaining
-  logs:       string[];
-  error:      TrainingError | null;
-  outputPath: string | null;
-  duration:   number | null;        // total seconds, set on completion
+  status:             TrainingStatus;
+  uploadProgress:     number;       // 0-100
+  processingProgress: number;       // 0-100
+  iteration:          number;
+  total:              number;
+  loss:               number | null;
+  eta:                number | null;        // estimated seconds remaining
+  logs:               string[];
+  error:              TrainingError | null;
+  outputPath:         string | null;
+  duration:           number | null;        // total seconds, set on completion
+  sourcePath:         string | null;
 }
 
+
 export interface StartOptions {
-  sourcePath:  string;
+  sourcePath?: string;
   modelPath:   string;
   outdoor?:    boolean;
   eval?:       boolean;
@@ -44,10 +48,11 @@ export interface StartOptions {
 }
 
 export interface UseTrainingStreamReturn {
-  start:  (options: StartOptions) => Promise<void>;
-  cancel: () => Promise<void>;
-  reset:  () => void;
-  state:  TrainingState;
+  uploadVideo: (file: File, fps: number) => Promise<string | null>;
+  start:       (options: StartOptions) => Promise<void>;
+  cancel:      () => Promise<void>;
+  reset:       () => void;
+  state:       TrainingState;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,15 +79,17 @@ type EngineEvent =
 // ---------------------------------------------------------------------------
 
 const INITIAL_STATE: TrainingState = {
-  status:     "idle",
-  iteration:  0,
-  total:      30000,
+  status:         "idle",
+  uploadProgress: 0,
+  iteration:      0,
+  total:          30000,
   loss:       null,
   eta:        null,
   logs:       [],
   error:      null,
   outputPath: null,
   duration:   null,
+  sourcePath: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,6 +165,107 @@ export function useTrainingStream(): UseTrainingStreamReturn {
   }, []);
 
   // ------------------------------------------------------------------
+  // uploadVideo()
+  // ------------------------------------------------------------------
+
+  const uploadVideo = useCallback(
+    async (file: File, fps: number): Promise<string | null> => {
+      setState((prev) => ({ 
+        ...prev, 
+        status: "uploading", 
+        uploadProgress: 0,
+        processingProgress: 0,
+        logs: [`Uploading video: ${file.name}...`] 
+      }));
+
+      return new Promise(async (resolve) => {
+        try {
+          const formData = new FormData();
+          formData.append("video", file);
+          formData.append("fps", fps.toString());
+
+          // We'll use fetch because it handles streaming responses much better than XHR.
+          // Note: fetch doesn't have an easy "upload progress" callback, but for local/high-speed 
+          // development, the "Processing" phase is what actually takes time.
+          const res = await fetch(`${API_URL}/api/upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            throw new Error(`Upload failed: ${res.statusText}`);
+          }
+
+          if (!res.body) {
+            throw new Error("No response body");
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const rawData = line.slice(6);
+                let data;
+                try {
+                  data = JSON.parse(rawData);
+                } catch {
+                  continue;
+                }
+
+                if (data.type === "progress" && data.progress !== undefined) {
+                  setState(prev => ({ 
+                    ...prev, 
+                    uploadProgress: 100, // Upload is done if we are seeing processing events
+                    processingProgress: data.progress 
+                  }));
+                }
+                
+                if (data.message) {
+                  appendLog(data.message);
+                }
+
+                if (data.type === "complete" && data.source_path) {
+                  setState(prev => ({ 
+                    ...prev, 
+                    status: "idle", 
+                    sourcePath: data.source_path,
+                    processingProgress: 100 
+                  }));
+                  resolve(data.source_path);
+                  return;
+                }
+
+                if (data.type === "error") {
+                  throw new Error(data.message || "Unknown server error");
+                }
+              }
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setState((prev) => ({
+            ...prev,
+            status: "error",
+            error: { code: "UPLOAD_ERROR", message: msg }
+          }));
+          resolve(null);
+        }
+      });
+    },
+    []
+  );
+
+  // ------------------------------------------------------------------
   // start()
   // ------------------------------------------------------------------
 
@@ -168,14 +276,26 @@ export function useTrainingStream(): UseTrainingStreamReturn {
         readerRef.current = null;
       }
 
-      setState({ ...INITIAL_STATE, status: "running", logs: [] });
+      const finalSourcePath = options.sourcePath || state.sourcePath;
+
+      if (!finalSourcePath) {
+        setState((prev) => ({
+          ...prev,
+          status: "error",
+          error: { code: "NO_SOURCE", message: "No source path available. Upload a video first." }
+        }));
+        return;
+      }
+
+      setState((prev) => ({ ...prev, status: "running" }));
+      appendLog("Starting training...");
 
       try {
         const res = await fetch(`${API_URL}/api/train`, {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            source_path: options.sourcePath,
+            source_path: finalSourcePath,
             model_path:  options.modelPath,
             outdoor:     options.outdoor  ?? false,
             eval:        options.eval     ?? false,
@@ -246,7 +366,7 @@ export function useTrainingStream(): UseTrainingStreamReturn {
         }));
       }
     },
-    [handleEvent]
+    [handleEvent, state.sourcePath]
   );
 
   // ------------------------------------------------------------------
@@ -276,5 +396,5 @@ export function useTrainingStream(): UseTrainingStreamReturn {
     setState(INITIAL_STATE);
   }, []);
 
-  return { start, cancel, reset, state };
+  return { uploadVideo, start, cancel, reset, state };
 }

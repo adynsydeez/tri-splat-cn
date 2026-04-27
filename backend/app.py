@@ -19,10 +19,12 @@ import signal
 import subprocess
 import sys
 import threading
-
+import time
+import cv2
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
@@ -47,6 +49,9 @@ CORE_ENGINE_PATH = os.environ.get(
     "CORE_ENGINE_PATH",
     os.path.join(_repo_root, "core_engine", "train.py")
 )
+
+UPLOAD_FOLDER = os.path.join(_here, "data")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Job state (single-job model — one training run at a time)
@@ -246,6 +251,100 @@ def status():
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload():
+    """
+    Upload a video and split it into frames.
+    Returns a stream of progress events.
+    """
+    if 'video' not in request.files:
+        return jsonify({"error": "No video file provided"}), 400
+    
+    video = request.files['video']
+    if video.filename == '':
+        return jsonify({"error": "Empty filename"}), 400
+
+    fps = float(request.form.get('fps', 2))
+    
+    filename = secure_filename(video.filename)
+    job_id = f"job_{int(time.time())}"
+    job_dir = os.path.join(UPLOAD_FOLDER, job_id)
+    os.makedirs(job_dir, exist_ok=True)
+    
+    video_path = os.path.join(job_dir, filename)
+    video.save(video_path)
+
+    def generate():
+        def sse(data: dict):
+            return f"data: {json.dumps(data)}\n\n"
+
+        yield sse({"type": "status", "message": "Starting video processing..."})
+
+        try:
+            input_dir = os.path.join(job_dir, "input")
+            os.makedirs(input_dir, exist_ok=True)
+
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                yield sse({"type": "error", "message": "Could not open video file"})
+                return
+
+            video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            hop = video_fps / fps
+            
+            # Estimated frames to be extracted
+            est_total = int(total_frames / hop) if hop > 0 else 0
+
+            count = 0
+            frame_idx = 0
+            
+            last_progress_time = time.time()
+
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_idx % hop < 1.0:
+                    frame_name = f"{count:05d}.jpg"
+                    cv2.imwrite(os.path.join(input_dir, frame_name), frame)
+                    count += 1
+                
+                frame_idx += 1
+
+                # Throttle progress updates to ~10 per second
+                if time.time() - last_progress_time > 0.1:
+                    progress = int((frame_idx / total_frames) * 100) if total_frames > 0 else 0
+                    yield sse({
+                        "type": "progress", 
+                        "progress": progress, 
+                        "message": f"Extracting frames: {count} extracted..."
+                    })
+                    last_progress_time = time.time()
+
+            cap.release()
+
+            yield sse({
+                "type": "complete", 
+                "source_path": os.path.abspath(job_dir),
+                "num_frames": count,
+                "message": f"Successfully extracted {count} frames"
+            })
+
+        except Exception as e:
+            yield sse({"type": "error", "message": str(e)})
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control":   "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
